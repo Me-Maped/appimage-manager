@@ -14,15 +14,22 @@ OUT="${1:-$ROOT/dist}"
 BUILD="$ROOT/build"
 APPDIR="$ROOT/build/AppDir"
 
-if ! command -v appimagetool >/dev/null; then
+APPIMAGETOOL="${APPIMAGETOOL:-$(command -v appimagetool || true)}"
+if [[ -z "$APPIMAGETOOL" ]]; then
   cat >&2 <<MSG
 appimagetool not found.
   Arch:   sudo pacman -S appimagetool   (or: yay -S appimagetool-bin)
   Others: curl -L -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool && sudo mv appimagetool /usr/local/bin/
+  Or point APPIMAGETOOL at a downloaded copy: APPIMAGETOOL=/path/to/appimagetool $0
 Then re-run: $0
 MSG
   exit 1
+fi
+
+# appimagetool is itself an AppImage; without FUSE it must unpack before running.
+if [[ ! -e /dev/fuse ]]; then
+  export APPIMAGE_EXTRACT_AND_RUN=1
 fi
 
 cmake -S "$ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release >/dev/null
@@ -42,10 +49,14 @@ bundle() {
   local bin="$1"
   ldd "$bin" | awk '/=> \// {print $3}' | while read -r lib; do
     case "$(basename "$lib")" in
-      # glibc / loader / graphics stack stay on the host
+      # glibc / loader, the GL stack (glvnd + Mesa + DRI) and the X11/Wayland
+      # client stack stay on the host: drivers must match the running kernel and
+      # GPU, and mixing a bundled libglvnd with the host's dispatcher breaks.
       libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|ld-linux*|\
-      libGL.so*|libGLX.so*|libEGL.so*|libGLdispatch.so*|libdrm.so*|\
-      libX11.so*|libxcb.so*|libwayland-*.so*) continue ;;
+      libGL.so*|libOpenGL.so*|libGLX.so*|libEGL.so*|libGLdispatch.so*|libdrm.so*|\
+      libgbm.so*|libglapi.so*|libX11*.so*|libxcb*.so*|libXau.so*|libXdmcp.so*|\
+      libXext.so*|libXrandr.so*|libXi.so*|libXcursor.so*|libXfixes.so*|\
+      libXss.so*|libwayland-*.so*) continue ;;
     esac
     [[ -e "$APPDIR/usr/lib/$(basename "$lib")" ]] || cp -L "$lib" "$APPDIR/usr/lib/"
   done
@@ -67,7 +78,11 @@ RUN
 chmod +x "$APPDIR/AppRun"
 
 mkdir -p "$OUT"
-ARCH=x86_64 appimagetool "$APPDIR" "$OUT/aimgr-x86_64.AppImage"
+APP="$OUT/aimgr-x86_64.AppImage"
+ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$APP"
+(cd "$OUT" && sha256sum "$(basename "$APP")" > "$(basename "$APP").sha256")
+
 echo
-echo "built: $OUT/aimgr-x86_64.AppImage"
-echo "try:   $OUT/aimgr-x86_64.AppImage --help"
+echo "built: $APP"
+echo "sha256: $(cut -d' ' -f1 "$APP.sha256")"
+echo "try:   $APP --help"

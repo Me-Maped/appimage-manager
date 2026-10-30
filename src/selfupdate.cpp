@@ -368,8 +368,9 @@ bool self_integrate(std::string* err, std::string* desktop_path) {
   body += "GenericName=AppImage Manager\n";
   body += "Comment=Check, update, back up and roll back AppImages\n";
   // Escape the path: a home directory with quotes/newlines must not be able to
-  // inject extra Exec= arguments.
-  body += "Exec=" + escape_desktop_exec(info.appimage_path) + " %U\n";
+  // inject extra Exec= arguments. No field codes: aimgr itself takes commands,
+  // not URLs or file paths, so it must never be offered as an "open with" target.
+  body += "Exec=" + escape_desktop_exec(info.appimage_path) + "\n";
   body += "TryExec=" + escape_desktop_exec(info.appimage_path) + "\n";
   body += "Icon=aimgr\n";
   body += "Terminal=false\n";
