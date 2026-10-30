@@ -1,0 +1,12 @@
+build/
+build-*/
+*.o
+*.a
+*.so
+*.part
+.cache/
+compile_commands.json
+.idea/
+.vscode/
+*.AppImage
+!tests/fixtures/*.AppImage

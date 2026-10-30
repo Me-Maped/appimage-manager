@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=aimgr
+GenericName=AppImage Manager
+Comment=Check, update, back up and roll back AppImages
+Exec=aimgr-gui
+Icon=system-software-update
+Terminal=false
+Categories=System;PackageManager;Utility;
+Keywords=appimage;update;package;manager;
+StartupWMClass=aimgr
