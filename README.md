@@ -272,11 +272,14 @@ aimgr self status
 aimgr self update
 aimgr self update --restart
 aimgr self update --dry-run
+aimgr self update --prerelease     # 也跟随 GitHub 预发布（pre-release）
 aimgr self integrate
 aimgr self remove
 ```
 
-自更新使用 `AIMGR_SELF_REPO` 或 CMake 中的 `AIMGR_SELF_REPO`。
+自更新使用 `AIMGR_SELF_REPO` 或 CMake 中的 `AIMGR_SELF_REPO`。默认只跟随正式发布，
+发布 `v0.1.0` 这类 pre-release 时需要 `--prerelease`；校验和直接取自 GitHub release
+资产的 `digest` 字段，没有则只做 ELF/AppImage 结构校验。
 
 ### 常用脚本
 
@@ -318,6 +321,7 @@ aimgr [全局选项] <命令> [参数]
   recover                       修复中断事务
   doctor                        打印路径与 API 诊断
   self <status|update|integrate|remove>
+  self update [--force] [--prerelease] [--dry-run] [--restart]
   gui                           启动图形界面
 ```
 

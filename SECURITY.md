@@ -1,6 +1,6 @@
 # 安全审查报告 / Security Audit
 
-审查对象：`aimgr` 1.0.0（`src/`、`gui/`、`packaging/`、`tests/`）
+审查对象：`aimgr` 0.1.0（`src/`、`gui/`、`packaging/`、`tests/`）
 审查日期：2026-10-30
 
 审查方法：

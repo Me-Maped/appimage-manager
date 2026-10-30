@@ -116,6 +116,23 @@ def releases_for(repo: str, base: str):
                 "digest": "sha256:" + sha(REPO_ASSETS[repo]["Demo-1.9.0.AppImage"]),
             }],
         })
+    if repo == "acme/aimgr":
+        # A pre-release that `self update` must ignore unless --prerelease is given.
+        body = fake_appimage("aimgr-3.0.0-rc1")
+        entries.append({
+            "tag_name": "v3.0.0-rc1",
+            "name": "3.0.0 rc1",
+            "draft": False,
+            "prerelease": True,
+            "published_at": "2025-09-20T10:00:00Z",
+            "html_url": f"{base}/releases/tag/v3.0.0-rc1",
+            "assets": [{
+                "name": "aimgr-x86_64.AppImage",
+                "browser_download_url": f"{base}/acme/aimgr/releases/download/v3.0.0-rc1/aimgr-x86_64.AppImage",
+                "size": len(body),
+                "digest": "sha256:" + sha(body),
+            }],
+        })
     return entries
 
 

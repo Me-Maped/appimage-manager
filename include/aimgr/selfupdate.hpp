@@ -23,6 +23,7 @@ struct SelfUpdateOptions {
   std::string target;        ///< empty -> the running AppImage
   bool force = false;
   bool dry_run = false;
+  bool allow_prerelease = false;  ///< consider GitHub pre-releases too
 };
 
 struct SelfUpdateResult {

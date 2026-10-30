@@ -175,6 +175,7 @@ SelfUpdateResult self_update(const SelfUpdateOptions& opts, Http& http, const Lo
   SourceGithub gh;
   gh.repo = opts.repo.empty() ? self_default_repo() : opts.repo;
   gh.asset_regex = opts.asset_regex.empty() ? std::string("aimgr-.*\\.AppImage$") : opts.asset_regex;
+  gh.allow_prerelease = opts.allow_prerelease;
   gh.tag_prefix = "v";
 
   RemoteRelease rr = resolve_github(gh, http, log);

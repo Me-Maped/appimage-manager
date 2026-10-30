@@ -53,6 +53,8 @@ const char* kUsage = R"(aimgr - AppImage 管理器（检查更新 / 更新 / 回
   deintegrate <id>              删除该应用的 .desktop 文件
   self <status|update|integrate|remove>
                                 管理 aimgr 自身：状态 / 自更新（GitHub 发布）/ 创建或移除启动器项
+  self update [--force] [--prerelease] [--dry-run] [--restart]
+                                自更新；默认只跟随正式版，--prerelease 也跟随预发布
   recover                       修复上次中断的更新（启动时也会自动执行）
   doctor                        打印环境/路径诊断
   gui                           启动图形界面（aimgr-gui）
@@ -739,6 +741,7 @@ int cmd_self(Manager& m, const Args& a) {
     opts.target = a.get("path");
     opts.force = a.has("force");
     opts.dry_run = a.has("dry-run");
+    opts.allow_prerelease = a.has("prerelease");
     std::string lerr;
     if (!m.begin_mutation(&lerr)) {
       std::fprintf(stderr, "%s\n", lerr.c_str());

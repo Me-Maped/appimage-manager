@@ -261,6 +261,11 @@ check "self update kept a backup of the old build" "ls $HOME/.local/share/aimgr/
 check "self update picked the host architecture (x86_64, not aarch64)" "grep -qi 'aimgr-x86_64' $TMP/self-update.log"
 APPIMAGE="$SELF_APP" AIMGR_SELF_REPO=acme/aimgr run self update >"$TMP/self-update2.log" 2>&1
 check "second self update is a no-op" "grep -qi 'up to date' $TMP/self-update2.log"
+APPIMAGE="$SELF_APP" AIMGR_SELF_REPO=acme/aimgr run self update --dry-run >"$TMP/self-dry.log" 2>&1
+check "self update ignores pre-releases by default" "! grep -q '3.0.0-rc1' $TMP/self-dry.log"
+APPIMAGE="$SELF_APP" AIMGR_SELF_REPO=acme/aimgr run self update --dry-run --prerelease >"$TMP/self-pre.log" 2>&1
+check "self update --prerelease considers pre-releases" "grep -q '3.0.0-rc1' $TMP/self-pre.log"
+check "a dry run leaves the running AppImage untouched" "grep -q 'aimgr-2.0.0' $SELF_APP"
 printf 'not an appimage\n' > "$TMP/self/garbage.AppImage"
 APPIMAGE="$TMP/self/garbage.AppImage" AIMGR_SELF_REPO=acme/aimgr run self update >"$TMP/self-bad.log" 2>&1
 check "self update refuses a non-AppImage target" "[[ $? -ne 0 ]] && grep -qi 'refusing to replace' $TMP/self-bad.log"
