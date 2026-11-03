@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -42,6 +43,32 @@ bool fsync_dir_of(const fs::path& p) {
   if (dfd < 0) return false;
   ::fsync(dfd);
   ::close(dfd);
+  return true;
+}
+
+bool run_absolute_helper(const char* program, const std::vector<std::string>& args) {
+  std::string exe;
+  for (const char* dir : {"/usr/bin/", "/bin/", "/usr/local/bin/"}) {
+    const std::string candidate = std::string(dir) + program;
+    if (::access(candidate.c_str(), X_OK) == 0) {
+      exe = candidate;
+      break;
+    }
+  }
+  if (exe.empty()) return false;
+  const pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    std::vector<char*> argv;
+    argv.push_back(const_cast<char*>(exe.c_str()));
+    for (const auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+    ::execv(exe.c_str(), argv.data());
+    ::_exit(127);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
   return true;
 }
 }  // namespace
@@ -541,6 +568,24 @@ bool path_is_within(const fs::path& child, const fs::path& parent) {
     if (ci == c.end() || *ci != *pi) return false;
   }
   return true;
+}
+
+void refresh_desktop_database(const fs::path& applications_dir) {
+  run_absolute_helper("update-desktop-database", {applications_dir.string()});
+
+  const char* current = ::getenv("XDG_CURRENT_DESKTOP");
+  const char* session = ::getenv("DESKTOP_SESSION");
+  const char* full_session = ::getenv("KDE_FULL_SESSION");
+  const std::string desktops =
+      to_lower(std::string(current ? current : "") + ":" + (session ? session : ""));
+  const bool kde = desktops.find("kde") != std::string::npos ||
+                   desktops.find("plasma") != std::string::npos ||
+                   (full_session && *full_session);
+  if (!kde) return;
+
+  for (const char* helper : {"kbuildsycoca6", "kbuildsycoca5", "kbuildsycoca"}) {
+    if (run_absolute_helper(helper, {"--noincremental"})) return;
+  }
 }
 
 std::string url_scheme(const std::string& url) {

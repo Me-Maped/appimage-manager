@@ -1367,6 +1367,7 @@ bool Manager::set_desktop(App& app, const DesktopEntry& de, bool enabled,
     app.integrated = false;
     app.desktop_entry.clear();
     app.desktop = clean;
+    refresh_desktop_database(fs::path(entry).parent_path());
     return save(err);
   }
 
@@ -1387,6 +1388,7 @@ bool Manager::set_desktop(App& app, const DesktopEntry& de, bool enabled,
   app.integrated = true;
   app.desktop_entry = entry;
   log_.info(app.id + ": wrote desktop entry " + entry);
+  refresh_desktop_database(fs::path(entry).parent_path());
   return save(err);
 }
 

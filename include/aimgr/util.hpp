@@ -108,6 +108,11 @@ std::string sanitize_desktop_value(const std::string& s);
 /// partially non-existent; lexical normalisation is used for the tail).
 bool path_is_within(const fs::path& child, const fs::path& parent);
 
+/// Refreshes desktop-environment application indexes after creating or
+/// removing a .desktop entry. Besides the MIME database, KDE uses ksycoca for
+/// its application menu and does not refresh it from update-desktop-database.
+void refresh_desktop_database(const fs::path& applications_dir);
+
 /// "https", "http", "file", ... or "" when the string has no scheme.
 std::string url_scheme(const std::string& url);
 }  // namespace aimgr

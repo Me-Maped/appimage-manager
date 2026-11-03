@@ -3,7 +3,6 @@
 #include "aimgr/selfupdate.hpp"
 
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -37,32 +36,6 @@ std::string xdg_data_home() {
   if (!v.empty()) return v;
   const std::string home = env_str("HOME");
   return home.empty() ? std::string() : home + "/.local/share";
-}
-
-/// Runs a helper (e.g. update-desktop-database) without a shell.
-void run_helper(const char* program, const std::vector<std::string>& args) {
-  // Absolute path only: execvp() would let a hijacked $PATH run arbitrary code.
-  std::string exe;
-  for (const char* dir : {"/usr/bin/", "/bin/", "/usr/local/bin/"}) {
-    const std::string candidate = std::string(dir) + program;
-    if (::access(candidate.c_str(), X_OK) == 0) {
-      exe = candidate;
-      break;
-    }
-  }
-  if (exe.empty()) return;
-  pid_t pid = ::fork();
-  if (pid < 0) return;
-  if (pid == 0) {
-    std::vector<char*> argv;
-    argv.push_back(const_cast<char*>(exe.c_str()));
-    for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-    argv.push_back(nullptr);
-    ::execv(exe.c_str(), argv.data());
-    ::_exit(127);
-  }
-  int status = 0;
-  ::waitpid(pid, &status, 0);
 }
 
 bool write_icon(const fs::path& dst, std::string* err) {
@@ -388,7 +361,9 @@ bool self_integrate(std::string* err, std::string* desktop_path) {
   // inject extra Exec= arguments. No field codes: aimgr itself takes commands,
   // not URLs or file paths, so it must never be offered as an "open with" target.
   body += "Exec=" + escape_desktop_exec(info.appimage_path) + "\n";
-  body += "TryExec=" + escape_desktop_exec(info.appimage_path) + "\n";
+  // TryExec is a plain string, not an Exec command line: quotes would become
+  // part of the path and KDE would reject the entry as not installed.
+  body += "TryExec=" + strip_control(info.appimage_path) + "\n";
   body += "Icon=aimgr\n";
   body += "Terminal=false\n";
   body += "Categories=System;PackageManager;Utility;\n";
@@ -399,7 +374,7 @@ bool self_integrate(std::string* err, std::string* desktop_path) {
 
   const fs::path entry = apps_dir / "aimgr.desktop";
   if (!write_file_atomic(entry, body, err, 0644)) return false;
-  run_helper("update-desktop-database", {apps_dir.string()});
+  refresh_desktop_database(apps_dir);
   if (desktop_path) *desktop_path = entry.string();
   return true;
 }
@@ -424,7 +399,7 @@ bool self_deintegrate(std::string* err) {
     if (err) *err = "no desktop entry to remove at " + entry.string();
     return false;
   }
-  run_helper("update-desktop-database", {apps_dir.string()});
+  refresh_desktop_database(apps_dir);
   return true;
 }
 
