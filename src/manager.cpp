@@ -371,15 +371,17 @@ UpdateResult Manager::update(App& app, const UpdateOptions& opts) {
     }
   }
   bool cache_ok = false;
+  std::string final_sha;
   if (path_is_regular(cache)) {
     std::string why;
     const bool magic = looks_like_appimage(cache, &why);
     const bool size_ok = rr.size == 0 || path_size(cache) == rr.size;
     std::string digest;
-    if (magic && size_ok && !rr.sha256.empty()) digest = sha256_file(cache);
-    const bool digest_ok = rr.sha256.empty() || digest == rr.sha256;
+    if (magic && size_ok) digest = sha256_file(cache);
+    const bool digest_ok = !digest.empty() && (rr.sha256.empty() || digest == rr.sha256);
     cache_ok = magic && size_ok && digest_ok;
     if (cache_ok) {
+      final_sha = digest;
       log_.info(app.id + ": reusing cached download " + cache.string());
     } else {
       log_.warn(app.id + ": cached download is stale, refetching");
@@ -426,7 +428,13 @@ UpdateResult Manager::update(App& app, const UpdateOptions& opts) {
       log_.error(app.id + ": " + u.error);
       return u;
     }
-    const std::string digest = sha256_file(part);
+    std::string hash_err;
+    const std::string digest = sha256_file(part, &hash_err);
+    if (digest.empty()) {
+      u.error = "cannot hash downloaded file: " + hash_err;
+      log_.error(app.id + ": " + u.error);
+      return u;
+    }
     if (!rr.sha256.empty() && digest != rr.sha256) {
       std::error_code ec;
       fs::remove(part, ec);
@@ -437,8 +445,18 @@ UpdateResult Manager::update(App& app, const UpdateOptions& opts) {
     if (rr.sha256.empty())
       log_.warn(app.id + ": source published no checksum, verified ELF/AppImage marker only");
     if (!resize_and_swap(part, cache, &u.error)) return u;
+    final_sha = digest;
   }
-  const std::string new_sha = sha256_file(cache);
+  if (final_sha.empty()) {
+    std::string hash_err;
+    final_sha = sha256_file(cache, &hash_err);
+    if (final_sha.empty()) {
+      u.error = "cannot hash cached file: " + hash_err;
+      log_.error(app.id + ": " + u.error);
+      return u;
+    }
+  }
+  const std::string new_sha = final_sha;
 
   // ------------------------------------------------------------------ backup
   std::string backup_path;
@@ -523,7 +541,7 @@ UpdateResult Manager::update(App& app, const UpdateOptions& opts) {
   app.installed_version = rr.version.empty() ? installed : rr.version;
   app.installed_sha256 = new_sha;
   app.last_update = now_iso();
-  app.last_status = "up-to-date";
+  app.last_status = rr.version.empty() ? "unknown" : "up-to-date";
   app.last_check = now_iso();
   std::string cerr;
   if (!save(&cerr)) log_.warn("config save failed (state on disk is fine): " + cerr);

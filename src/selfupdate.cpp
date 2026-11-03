@@ -212,11 +212,13 @@ SelfUpdateResult self_update(const SelfUpdateOptions& opts, Http& http, const Lo
   }
 
   bool have = false;
+  std::string final_sha;
   if (path_is_regular(cache)) {
     std::string why;
     if (looks_like_appimage(cache, &why) && (rr.size == 0 || path_size(cache) == rr.size)) {
       const std::string digest = sha256_file(cache);
-      have = rr.sha256.empty() || digest == rr.sha256;
+      have = !digest.empty() && (rr.sha256.empty() || digest == rr.sha256);
+      if (have) final_sha = digest;
     }
     if (!have) {
       std::error_code ec;
@@ -248,7 +250,12 @@ SelfUpdateResult self_update(const SelfUpdateOptions& opts, Http& http, const Lo
       res.error = "size mismatch for " + rr.asset;
       return res;
     }
-    const std::string digest = sha256_file(part);
+    std::string hash_err;
+    const std::string digest = sha256_file(part, &hash_err);
+    if (digest.empty()) {
+      res.error = "cannot hash downloaded file: " + hash_err;
+      return res;
+    }
     if (!rr.sha256.empty() && digest != rr.sha256) {
       std::error_code ec;
       fs::remove(part, ec);
@@ -263,8 +270,17 @@ SelfUpdateResult self_update(const SelfUpdateOptions& opts, Http& http, const Lo
     }
     std::error_code ec;
     fs::remove(part, ec);
+    final_sha = digest;
   }
-  const std::string new_sha = sha256_file(cache);
+  if (final_sha.empty()) {
+    std::string hash_err;
+    final_sha = sha256_file(cache, &hash_err);
+    if (final_sha.empty()) {
+      res.error = "cannot hash cached file: " + hash_err;
+      return res;
+    }
+  }
+  const std::string new_sha = final_sha;
 
   // ---- backup the running build -----------------------------------------
   const fs::path bdir = paths.backup_dir / "self";

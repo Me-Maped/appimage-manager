@@ -42,8 +42,8 @@ for path in sys.argv[1:]:
 PY
 "$AIMGR_BIN" scan "$TMP/apps" >/dev/null 2>&1 || true
 
-# A source that would be hit by a startup auto-check. The mock server records
-# every request; the GUI must leave this log empty until the user clicks Check.
+# Every GUI process launch checks all configured sources once. This is not tied
+# to scans, background resume, or a persisted first-run flag.
 python3 "$HERE/mock_server.py" --port-file "$TMP/port" --log-file "$TMP/requests.log" \
   2>"$TMP/server.log" &
 SRV_PID=$!
@@ -67,11 +67,26 @@ shoot() {  # $1 = theme, $2 = output png
 
 fail=0
 shoot cyberpunk "$TMP/a.png" || fail=1
+grep -q 'display scale:' "$TMP/cyberpunk.log" || {
+  echo "  display scale was not reported"; fail=1
+}
+if [[ ! -s "$TMP/requests.log" ]]; then
+  echo "  first launch did not perform the startup update check"; fail=1
+fi
+python3 - "$AIMGR_CONFIG" <<'PY' || fail=1
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+if "startup_check_done" in data.get("ui", {}):
+    print("  startup update checking must not be persisted")
+    raise SystemExit(1)
+PY
+: > "$TMP/requests.log"
 shoot brutalist "$TMP/b.png" || fail=1
 grep -q "theme: 01 / Cyberpunk" "$TMP/cyberpunk.log" || { echo "  theme label missing (cyberpunk)"; fail=1; }
 grep -q "theme: 07 / Neo Brutalism" "$TMP/brutalist.log" || { echo "  theme label missing (brutalist)"; fail=1; }
-if [[ -s "$TMP/requests.log" ]]; then
-  echo "  startup unexpectedly performed an update check:"; cat "$TMP/requests.log"; fail=1
+if [[ ! -s "$TMP/requests.log" ]]; then
+  echo "  second GUI launch did not perform the startup update check"; fail=1
 fi
 
 python3 - "$TMP/a.png" "$TMP/b.png" <<'PY' || exit 1

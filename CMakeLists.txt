@@ -86,6 +86,10 @@ if(AIMGR_BUILD_TESTS)
            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.sh $<TARGET_FILE:aimgr>
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   set_tests_properties(e2e PROPERTIES TIMEOUT 300)
+  add_test(NAME packaging-script
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/build_appimage_smoke.sh
+                   ${CMAKE_CURRENT_SOURCE_DIR}/packaging/build-appimage.sh)
+  set_tests_properties(packaging-script PROPERTIES TIMEOUT 60)
 
   if(AIMGR_BUILD_GUI)
     add_test(NAME gui-smoke

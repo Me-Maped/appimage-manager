@@ -18,6 +18,7 @@
 - **GitHub API 限流回退**：匿名 API 返回 403/429 时自动改用 `releases/latest` 与 `expanded_assets` 网页解析。
 - **断点续传**：下载使用 `.part` 文件与 HTTP Range，服务端忽略 Range 时自动重下。
 - **完整性校验**：文件大小、可选 SHA-256、ELF 与 AppImage 魔数；校验失败不会触碰现有文件。
+- **单次校验**：下载完成后只计算一遍新文件摘要；Linux 内核 SHA-256 可用时自动加速，否则回退到内置实现。
 - **dry-run**：查看将要下载与替换的目标，不落盘。
 
 ### 备份与恢复
@@ -34,7 +35,8 @@
 - **卸载**：删除登记、移动 AppImage 到备份、清理备份，或保留配置。
 - **每个 App 的 `.desktop`**：创建、修改、删除名称、说明、分类、图标、附加参数和 `Terminal`；`Exec` 始终指向受管理的 AppImage。
 - **自更新**：从自身 GitHub Release 下载、校验、备份并原子替换正在运行的 AppImage；支持自动重启。
-- **CLI + GUI**：JSON 输出、脚本化退出码；GUI 支持后台工作线程、进度、日志、确认对话框和主题切换。
+- **CLI + GUI**：JSON 输出、脚本化退出码；GUI 支持后台工作线程、进度、日志、确认对话框、主题切换和屏幕 DPI 跟随。
+- **启动检查**：每次启动 GUI 进程时对已配置的更新源自动检查一次；从后台恢复窗口不会重复检查，也不持久化启动状态。
 
 ### 安全边界
 
@@ -198,6 +200,7 @@ packaging/build-appimage.sh
 ```
 
 该脚本需要 `appimagetool`。
+打包默认使用独立的 `build-appimage/` 目录，不会复用或清理日常开发使用的 `build/`。如需指定其他目录，可设置 `AIMGR_APPIMAGE_BUILD_DIR`。
 
 ## 使用
 

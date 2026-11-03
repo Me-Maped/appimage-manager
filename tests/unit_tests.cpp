@@ -1,6 +1,8 @@
 // Unit tests for the pure-logic pieces: version comparison, JSON, SHA-256 and
-// GitHub repo parsing. No network, no filesystem writes.
+// GitHub repo parsing. No network; SHA file tests use an isolated temp file.
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -139,6 +141,21 @@ static void test_sha256() {
   std::string big(1000000, 'a');
   EXPECT_EQ(aimgr::Sha256::hex_of(big.data(), big.size()),
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+
+  const auto path = std::filesystem::temp_directory_path() / "aimgr-sha256-unit-test";
+  {
+    std::ofstream empty(path, std::ios::binary | std::ios::trunc);
+  }
+  EXPECT_EQ(aimgr::sha256_file(path),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write("abc", 3);
+  }
+  EXPECT_EQ(aimgr::sha256_file(path),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
 }
 
 static void test_hardening_helpers() {

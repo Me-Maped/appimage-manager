@@ -11,8 +11,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$ROOT/dist}"
-BUILD="$ROOT/build"
-APPDIR="$ROOT/build/AppDir"
+BUILD="${AIMGR_APPIMAGE_BUILD_DIR:-$ROOT/build-appimage}"
+BUILD="$(realpath -m -- "$BUILD")"
+APPDIR="$BUILD/AppDir"
 
 APPIMAGETOOL="${APPIMAGETOOL:-$(command -v appimagetool || true)}"
 if [[ -z "$APPIMAGETOOL" ]]; then
@@ -30,6 +31,25 @@ fi
 # appimagetool is itself an AppImage; without FUSE it must unpack before running.
 if [[ ! -e /dev/fuse ]]; then
   export APPIMAGE_EXTRACT_AND_RUN=1
+fi
+
+# A copied checkout can carry a CMake cache that still names the old source or
+# build directory. Packaging gets its own build tree, and a mismatched cache in
+# that tree is safe to regenerate without touching the developer's build/.
+if [[ "$BUILD" == "$ROOT" || "$ROOT/" == "$BUILD/"* ]]; then
+  echo "refusing unsafe AppImage build directory: $BUILD" >&2
+  exit 1
+fi
+CACHE="$BUILD/CMakeCache.txt"
+if [[ -f "$CACHE" ]]; then
+  CACHE_SOURCE="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | head -1)"
+  CACHE_BUILD="$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' "$CACHE" | head -1)"
+  if [[ "$CACHE_SOURCE" != "$ROOT" || "$CACHE_BUILD" != "$BUILD" ]]; then
+    echo "== resetting stale CMake cache in $BUILD" >&2
+    echo "   cached source: ${CACHE_SOURCE:-unknown}" >&2
+    echo "   cached build:  ${CACHE_BUILD:-unknown}" >&2
+    rm -rf -- "$BUILD"
+  fi
 fi
 
 cmake -S "$ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release >/dev/null

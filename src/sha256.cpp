@@ -3,6 +3,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/if_alg.h>
+#include <sys/socket.h>
+#endif
 
 #include <cerrno>
 #include <cstring>
@@ -21,6 +25,95 @@ constexpr uint32_t K[64] = {
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
 
 inline uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+
+std::string hex_bytes(const uint8_t* data, size_t size) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string out;
+  out.resize(size * 2);
+  for (size_t i = 0; i < size; ++i) {
+    out[i * 2] = hex[data[i] >> 4];
+    out[i * 2 + 1] = hex[data[i] & 0x0f];
+  }
+  return out;
+}
+
+std::string hash_file_software(int fd, const std::filesystem::path& path, std::string* err) {
+  Sha256 hash;
+  std::vector<char> buf(size_t{256} * 1024);
+  for (;;) {
+    const ssize_t n = ::read(fd, buf.data(), buf.size());
+    if (n == 0) break;
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      const int saved = errno;
+      if (err) *err = "read error while hashing " + path.string() + ": " + std::strerror(saved);
+      return "";
+    }
+    hash.update(buf.data(), static_cast<size_t>(n));
+  }
+  return hash.hex_final();
+}
+
+#ifdef __linux__
+std::string hash_file_kernel(int fd) {
+  const int alg = ::socket(AF_ALG, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+  if (alg < 0) return "";
+
+  struct sockaddr_alg sa {};
+  sa.salg_family = AF_ALG;
+  std::strncpy(reinterpret_cast<char*>(sa.salg_type), "hash", sizeof(sa.salg_type) - 1);
+  std::strncpy(reinterpret_cast<char*>(sa.salg_name), "sha256", sizeof(sa.salg_name) - 1);
+  if (::bind(alg, reinterpret_cast<const struct sockaddr*>(&sa), sizeof(sa)) != 0) {
+    ::close(alg);
+    return "";
+  }
+
+  const int op = ::accept(alg, nullptr, nullptr);
+  ::close(alg);
+  if (op < 0) return "";
+
+  constexpr size_t chunk_size = size_t{1} << 20;
+  std::vector<char> current(chunk_size), held(chunk_size);
+  size_t held_size = 0;
+  bool ok = true;
+  for (;;) {
+    ssize_t n = 0;
+    do {
+      n = ::read(fd, current.data(), current.size());
+    } while (n < 0 && errno == EINTR);
+    if (n < 0) {
+      ok = false;
+      break;
+    }
+    if (n == 0) break;
+    if (held_size > 0) {
+      const ssize_t sent = ::send(op, held.data(), held_size, MSG_MORE | MSG_NOSIGNAL);
+      if (sent != static_cast<ssize_t>(held_size)) {
+        ok = false;
+        break;
+      }
+    }
+    current.swap(held);
+    held_size = static_cast<size_t>(n);
+  }
+  if (ok && held_size > 0 &&
+      ::send(op, held.data(), held_size, MSG_NOSIGNAL) != static_cast<ssize_t>(held_size))
+    ok = false;
+
+  uint8_t digest[32] {};
+  ssize_t got = 0;
+  if (ok) {
+    do {
+      got = ::read(op, digest, sizeof(digest));
+    } while (got < 0 && errno == EINTR);
+  }
+  ::close(op);
+  if (!ok || got != static_cast<ssize_t>(sizeof(digest))) {
+    return "";
+  }
+  return hex_bytes(digest, sizeof(digest));
+}
+#endif
 }  // namespace
 
 Sha256::Sha256() {
@@ -96,16 +189,12 @@ std::string Sha256::hex_final() {
   std::memset(buf_ + buf_len_, 0, 56 - buf_len_);
   for (int i = 0; i < 8; ++i) buf_[56 + i] = uint8_t((total_bits >> (56 - i * 8)) & 0xff);
   block(buf_);
-  static const char* hexd = "0123456789abcdef";
-  std::string out;
-  out.reserve(64);
+  uint8_t digest[32] {};
   for (int i = 0; i < 8; ++i)
     for (int b = 3; b >= 0; --b) {
-      uint8_t byte = uint8_t((h_[i] >> (b * 8)) & 0xff);
-      out += hexd[byte >> 4];
-      out += hexd[byte & 0xf];
+      digest[i * 4 + (3 - b)] = uint8_t((h_[i] >> (b * 8)) & 0xff);
     }
-  return out;
+  return hex_bytes(digest, sizeof(digest));
 }
 
 std::string Sha256::hex_of(const void* data, size_t len) {
@@ -128,22 +217,21 @@ std::string sha256_file(const std::filesystem::path& path, std::string* err) {
                     (saved ? std::string(": ") + std::strerror(saved) : "");
     return "";
   }
-  Sha256 s;
-  std::vector<char> buf(size_t{256} * 1024);
-  for (;;) {
-    const ssize_t n = ::read(fd, buf.data(), buf.size());
-    if (n == 0) break;
-    if (n < 0) {
-      if (errno == EINTR) continue;
+  std::string digest;
+#ifdef __linux__
+  if (st.st_size > 0) digest = hash_file_kernel(fd);
+#endif
+  if (digest.empty()) {
+    if (::lseek(fd, 0, SEEK_SET) < 0) {
       const int saved = errno;
       ::close(fd);
-      if (err) *err = "read error while hashing " + path.string() + ": " + std::strerror(saved);
+      if (err) *err = "cannot rewind " + path.string() + " for hashing: " + std::strerror(saved);
       return "";
     }
-    s.update(buf.data(), static_cast<size_t>(n));
+    digest = hash_file_software(fd, path, err);
   }
   ::close(fd);
-  return s.hex_final();
+  return digest;
 }
 
 }  // namespace aimgr

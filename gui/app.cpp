@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -219,6 +220,28 @@ void apply_check_results(Manager& m, Shared& sh) {
       }
 }
 
+void apply_update_results(Manager& m, Shared& sh, const std::vector<UpdateResult>& results) {
+  refresh_rows(m, sh);
+  std::map<std::string, std::string> installed;
+  for (const auto& u : results)
+    if (App* app = m.find(u.id)) installed[u.id] = m.installed_version_of(*app);
+
+  std::lock_guard<std::mutex> lk(sh.mu);
+  for (const auto& u : results)
+    for (auto& row : sh.rows)
+      if (row.id == u.id) {
+        row.installed = installed[u.id];
+        if (u.ok) {
+          row.status = u.to.empty() ? "unknown" : "up-to-date";
+          row.latest = u.to;
+          row.error.clear();
+        } else {
+          row.status = "error";
+          row.error = u.error;
+        }
+      }
+}
+
 void refresh_self(Shared& sh) {
   const SelfInfo info = SelfInfo::detect();
   std::string desktop;
@@ -338,6 +361,7 @@ struct ThemeState {
   std::string preset_slug = "bento";
   std::string custom_file;
   float scale = 1.0f;
+  float screen_scale = 1.0f;
   std::string label = "bento";
 #ifdef AIMGR_HAS_IMGUI_THEMES
   ImGuiThemes::Id preset = ImGuiThemes::Id::Bento;
@@ -382,19 +406,30 @@ bool theme_use_file(ThemeState& st, const std::string& path, std::string* err) {
 }
 #endif
 
+float effective_ui_scale(const ThemeState& st) {
+  return std::clamp(st.scale * st.screen_scale, 0.5f, 4.0f);
+}
+
+float detect_screen_scale(SDL_Window* window) {
+  float scale = ImGui_ImplSDL2_GetContentScaleForWindow(window);
+  if (!std::isfinite(scale) || scale <= 0.0f) return 1.0f;
+  return std::clamp(scale, 1.0f, 3.0f);
+}
+
 /// Applies the theme to the ImGui style. Must run before ImGui::NewFrame().
 void theme_apply(const ThemeState& st) {
+  const float scale = effective_ui_scale(st);
 #ifdef AIMGR_HAS_IMGUI_THEMES
-  ImGuiThemes::Apply(st.theme, st.scale);
+  ImGuiThemes::Apply(st.theme, scale);
 #endif
-  ImGui::GetStyle().FontScaleMain = st.scale;
+  ImGui::GetStyle().FontScaleMain = scale;
 }
 
 /// Semantic button: 0 primary, 1 secondary, 2 danger.
 bool sbutton(const ThemeState& st, int role, const char* label, ImVec2 size = ImVec2(0, 0)) {
 #ifdef AIMGR_HAS_IMGUI_THEMES
   return ImGuiThemes::Button(st.theme, static_cast<ImGuiThemes::ButtonRole>(role), label, size,
-                             st.scale);
+                             effective_ui_scale(st));
 #else
   (void)st;
   (void)role;
@@ -576,7 +611,8 @@ int main(int argc, char** argv) {
 
   SDL_Window* window = SDL_CreateWindow("aimgr — AppImage Manager", SDL_WINDOWPOS_CENTERED,
                                         SDL_WINDOWPOS_CENTERED, 1240, 760,
-                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
+                                            SDL_WINDOW_ALLOW_HIGHDPI);
   if (!window) {
     std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     SDL_Quit();
@@ -598,6 +634,9 @@ int main(int argc, char** argv) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.IniFilename = nullptr;  // no ~/.config/aimgr/imgui.ini side effects
   load_fonts(io, 17.0f);
+  theme.screen_scale = detect_screen_scale(window);
+  std::fprintf(stderr, "display scale: %.2fx, user scale: %.2fx, effective scale: %.2fx\n",
+               theme.screen_scale, theme.scale, effective_ui_scale(theme));
   ImGui::StyleColorsDark();
   theme_apply(theme);
 
@@ -643,8 +682,13 @@ int main(int argc, char** argv) {
     refresh_rows(manager, sh);
     refresh_self(sh);
   });
-  // Startup is deliberately passive: loading the list must not perform network
-  // checks. Update checking is an explicit user action (toolbar/menu/row button).
+  const bool startup_check =
+      std::any_of(manager.config().apps.begin(), manager.config().apps.end(),
+                  [](const App& app) { return app.source != SourceType::None; });
+  if (startup_check) {
+    worker.submit(T("启动时检查更新", "Checking updates on startup"),
+                  [&manager, &sh] { apply_check_results(manager, sh); });
+  }
 
   const Uint32 start_ticks = SDL_GetTicks();
   bool running = true;
@@ -658,6 +702,23 @@ int main(int argc, char** argv) {
       if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
           e.window.windowID == SDL_GetWindowID(window))
         running = false;
+      if (e.type == SDL_WINDOWEVENT && e.window.windowID == SDL_GetWindowID(window)) {
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+        const bool display_changed = e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED;
+#else
+        const bool display_changed = false;
+#endif
+        if (display_changed || e.window.event == SDL_WINDOWEVENT_MOVED ||
+            e.window.event == SDL_WINDOWEVENT_RESIZED) {
+          const float next = detect_screen_scale(window);
+          if (std::fabs(next - theme.screen_scale) > 0.01f) {
+            theme.screen_scale = next;
+            std::fprintf(stderr,
+                         "display scale changed: %.2fx, user scale: %.2fx, effective scale: %.2fx\n",
+                         theme.screen_scale, theme.scale, effective_ui_scale(theme));
+          }
+        }
+      }
     }
     if (autoquit_ms > 0 && SDL_GetTicks() - start_ticks > static_cast<Uint32>(autoquit_ms))
       running = false;
@@ -742,7 +803,7 @@ int main(int argc, char** argv) {
                        u.id + ": " +
                            (u.updated ? u.from + " -> " + u.to
                                       : (u.ok ? std::string("up to date") : u.error)));
-            refresh_rows(manager, sh);
+            apply_update_results(manager, sh, results);
           });
         }
         ImGui::Separator();
@@ -786,6 +847,9 @@ int main(int argc, char** argv) {
         ImGui::SetNextItemWidth(180);
         if (ImGui::SliderFloat(T("界面缩放", "UI scale"), &theme.scale, 0.8f, 1.6f, "%.2f"))
           theme_apply(theme);
+        ImGui::SameLine();
+        ImGui::TextDisabled(T("显示 %.2fx / 有效 %.2fx", "display %.2fx / effective %.2fx"),
+                            theme.screen_scale, effective_ui_scale(theme));
 #else
         ImGui::TextDisabled("theme module unavailable");
 #endif
@@ -863,7 +927,7 @@ int main(int argc, char** argv) {
           push_log(sh, u.ok ? LogLevel::Info : LogLevel::Error,
                    u.id + ": " + (u.updated ? u.from + " -> " + u.to
                                             : (u.ok ? std::string("up to date") : u.error)));
-        refresh_rows(manager, sh);
+        apply_update_results(manager, sh, results);
       });
     }
     ImGui::SameLine();
@@ -1069,7 +1133,7 @@ int main(int argc, char** argv) {
                        id + ": " +
                            (u.updated ? u.from + " -> " + u.to
                                       : (u.ok ? std::string("already up to date") : u.error)));
-              refresh_rows(manager, sh);
+              apply_update_results(manager, sh, {u});
             });
           }
         }
@@ -1441,7 +1505,7 @@ int main(int argc, char** argv) {
                        (u.updated ? u.from + " -> " +
                                         (u.to.empty() ? std::string("unknown") : u.to)
                                   : (u.ok ? std::string("no update performed") : u.error)));
-          refresh_rows(manager, sh);
+          apply_update_results(manager, sh, {u});
         });
         ImGui::CloseCurrentPopup();
       }
@@ -1791,7 +1855,8 @@ int main(int argc, char** argv) {
                                "AppImage update / backup / rollback manager"));
       ImGui::TextUnformatted("UI: Dear ImGui (Me-Maped/imgui fork) + SDL2 + OpenGL3");
 #ifdef AIMGR_HAS_IMGUI_THEMES
-      ImGui::Text("theme: %s (scale %.2f)", theme.label.c_str(), theme.scale);
+      ImGui::Text("theme: %s (user %.2f, display %.2f, effective %.2f)", theme.label.c_str(),
+                  theme.scale, theme.screen_scale, effective_ui_scale(theme));
 #endif
       ImGui::Text("%s: %s", T("配置", "Config"), manager.paths().config.string().c_str());
       if (sbutton(theme, 1, "OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
@@ -1800,7 +1865,7 @@ int main(int argc, char** argv) {
 
     ImGui::Render();
     int w, h;
-    SDL_GetWindowSize(window, &w, &h);
+    SDL_GL_GetDrawableSize(window, &w, &h);
     glViewport(0, 0, w, h);
     glClearColor(0.06f, 0.07f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
